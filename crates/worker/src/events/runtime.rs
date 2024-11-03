@@ -204,21 +204,12 @@ pub async fn runtime_on_message(
     }
 }
 
-async fn handle_request(client: &Client, p: &EthPayload) -> EthPayload {
-    match client
-        .request::<Value, _>(
-            &p.method.clone().unwrap_or_default(),
-            p.params.clone().unwrap_or_default(),
-        )
-        .await
-    {
-        Ok(response) => EthPayload {
-            base: p.base.clone(),
-            method: p.method.clone(),
-            params: p.params.clone(),
-            result: Some(response),
-            error: None,
-        },
+async fn handle_request(client: &Client, mut p: EthPayload) -> EthPayload {
+    let method = p.method.as_deref().unwrap_or_default();
+    let params = p.params.clone().unwrap_or_default(); // Clone the params if necessary
+
+    match client.request::<Value, _>(method, params).await {
+        Ok(response) => p.result = Some(response),
         Err(error) => {
             let error_message = match &error {
                 ClientError::Call(call_error) => {
@@ -235,16 +226,14 @@ async fn handle_request(client: &Client, p: &EthPayload) -> EthPayload {
                 }
             };
 
-            EthPayload {
-                base: p.base.clone(),
-                method: p.method.clone(),
-                params: p.params.clone(),
-                result: None,
-                error: Some(Value::String(error_message)),
-            }
+            p.error = Some(Value::String(error_message));
         }
     }
+
+    p
 }
+
+
 
 // Function to send the EthPayload message to the tab
 async fn send_response(sender: JsValue, eth_payload: EthPayload) {
@@ -267,12 +256,12 @@ fn create_request_task(
         let eth_payload = {
             let provider_guard = provider.read().expect("Failed to acquire read lock"); // Lock the provider (not async)
             if let Some(client) = provider_guard.as_ref() {
-                handle_request(client, &p).await
+                handle_request(client, p).await
             } else {
                 EthPayload {
-                    base: p.base.clone(),
-                    method: p.method.clone(),
-                    params: p.params.clone(),
+                    base: p.base,
+                    method: p.method,
+                    params: p.params,
                     result: None,
                     error: Some(Value::String("Client not available".to_string())),
                 }
