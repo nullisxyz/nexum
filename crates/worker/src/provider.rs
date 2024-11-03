@@ -45,7 +45,9 @@ impl Provider {
         match create_client().await {
             Ok(client) => {
                 self.set_client(Some(client)).await;
-                if self.disconnected.swap(false, Ordering::Relaxed) && self.verify_connection().await {
+                if self.disconnected.swap(false, Ordering::Relaxed)
+                    && self.verify_connection().await
+                {
                     self.clone().on_connect().await;
                 } else {
                     self.clear_client().await;

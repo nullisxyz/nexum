@@ -172,7 +172,8 @@ pub async fn runtime_on_message(extension: Arc<Extension>, message: JsValue, sen
                                     result: None,
                                     error: Some(Value::String("Request timed out".to_string())),
                                 };
-                                let message = MessagePayload::JsonResponse(eth_payload).to_js_value();
+                                let message =
+                                    MessagePayload::JsonResponse(eth_payload).to_js_value();
                                 if let Some(tab_id) = tab_id_from_sender(sender_clone) {
                                     if let Err(e) = send_message_to_tab(tab_id, message).await {
                                         warn!("Failed to send response to tab: {:?}", e);
