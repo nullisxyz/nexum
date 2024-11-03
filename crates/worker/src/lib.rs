@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use builder::ExtensionBuilder;
+use chrome_sys::action::{self, IconPath, TabIconDetails};
 use events::setup_listeners;
 use futures::lock::Mutex;
 use js_sys::Reflect;
@@ -75,6 +76,24 @@ fn origin_from_url(url: Option<String>) -> String {
         }
         None => String::new(),
     }
+}
+
+enum ConnectionState {
+    Connected,
+    Disconnected,
+}
+
+/// Helper function to set the icon based on connection status
+fn set_icon_for_connection_state(state: ConnectionState) {
+    let path = match state {
+        ConnectionState::Connected => "icons/icon96good.png",
+        ConnectionState::Disconnected => "icons/icon96moon.png",
+    };
+    
+    let _ = action::set_icon(TabIconDetails {
+        path: Some(IconPath::Single(path.to_string())),
+        ..Default::default()
+    });
 }
 
 fn get_origin(sender: JsValue) -> String {
