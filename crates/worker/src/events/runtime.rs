@@ -248,7 +248,7 @@ async fn send_response(sender: JsValue, eth_payload: EthPayload) {
 }
 
 fn create_request_task(
-    p: EthPayload,
+    mut p: EthPayload,
     provider: ProviderType,
     sender: JsValue,
 ) -> impl Future<Output = ()> {
@@ -258,13 +258,8 @@ fn create_request_task(
             if let Some(client) = provider_guard.as_ref() {
                 handle_request(client, p).await
             } else {
-                EthPayload {
-                    base: p.base,
-                    method: p.method,
-                    params: p.params,
-                    result: None,
-                    error: Some(Value::String("Client not available".to_string())),
-                }
+                p.error = Some(Value::String("Client not available".to_string()));
+                p
             }
         };
 
