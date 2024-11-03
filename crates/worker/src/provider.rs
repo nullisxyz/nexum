@@ -11,7 +11,7 @@ use tracing::{debug, trace, warn};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::spawn_local;
 
-use crate::{events::send_event, set_icon_for_connection_state, ConnectionState, Extension};
+use crate::{events::send_event, ConnectionState, Extension};
 
 pub type ProviderType = Arc<RwLock<Option<Client>>>;
 const UPSTREAM_URL: &str = "ws://127.0.0.1:1248";
@@ -55,11 +55,9 @@ where
 async fn on_connect(extension: Arc<Extension>) {
     {
         let mut state = extension.state.lock().await;
-        state.set_frame_connected(true);
-        debug!("Provider connected");
+        state.set_frame_connected(ConnectionState::Connected);
     }
 
-    set_icon_for_connection_state(ConnectionState::Connected);
     send_event("connect", None, tabs::Query::default()).await;
     send_buffered_requests(extension).await;
 }
@@ -68,11 +66,9 @@ async fn on_connect(extension: Arc<Extension>) {
 async fn on_disconnect(extension: Arc<Extension>) {
     {
         let mut state = extension.state.lock().await;
-        state.set_frame_connected(false);
-        debug!("Provider disconnected");
+        state.set_frame_connected(ConnectionState::Disconnected);
     }
 
-    set_icon_for_connection_state(ConnectionState::Disconnected);
     send_event("disconnect", None, tabs::Query::default()).await;
 }
 
