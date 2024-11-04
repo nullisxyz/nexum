@@ -28,7 +28,7 @@
 	],
 	"web_accessible_resources": [
 		{
-			"resources": ["frame.js", "assets/*", "pkg/*"],
+			"resources": ["frame.js", "assets/*", "pkg/*", "injected/*"],
 			"matches": ["file://*/*", "https://*/*", "http://*/*"]
 		}
 	],
