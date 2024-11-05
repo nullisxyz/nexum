@@ -7,6 +7,13 @@ homepage = "https://nullis.xyz/nexum"
 repository = "https://github.com/nullisxyz/nexum"
 exclude = [".github/"]
 
+[package]
+name = "nexum"
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs" # Dummy path for a lib target; could be any empty or placeholder file.
+
 [workspace]
 members = [
     "crates/primitives",

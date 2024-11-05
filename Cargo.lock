@@ -518,6 +518,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexum"
+version = "0.0.0"
+
+[[package]]
 name = "nexum-primitives"
 version = "0.1.0"
 dependencies = [
