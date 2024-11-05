@@ -96,7 +96,7 @@ fn inject_frame_script() {
     };
 
     script.set_type("module");
-    script.set_src(&getURL("frame.js"));
+    script.set_src(&getURL("injected.js"));
 
     let script_clone = script.clone();
     let onload = Closure::wrap(Box::new(move || {
