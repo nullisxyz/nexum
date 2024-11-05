@@ -68,9 +68,9 @@ impl ProtocolMessage {
 
     // Deserialize from JsValue to ProtocolMessage
     pub fn from_js_value(js_value: &JsValue) -> Result<Self, JsValue> {
-        js_value.into_serde().map_err(|_| {
-            JsValue::from_str("Failed to deserialize JsValue into ProtocolMessage")
-        })
+        js_value
+            .into_serde()
+            .map_err(|_| JsValue::from_str("Failed to deserialize JsValue into ProtocolMessage"))
     }
 
     pub fn is_valid(js_value: &JsValue) -> bool {
