@@ -10,8 +10,6 @@ use wasm_bindgen::prelude::*;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MessagePayloadBase {
-    jsonrpc: String,
-    id: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
 }
@@ -36,8 +34,10 @@ impl EthEventPayload {
 // EthPayload for JSON-RPC responses
 #[derive(Serialize, Deserialize, Debug, Clone, Display)]
 #[display(
-    "EthPayload {{ jsonrpc: {}, id: {}, method: {:?}, params: {:?}, result: {:?} }}",
-    base.jsonrpc, base.id, method, params, result
+    "EthPayload {{ method: {:?}, params: {:?}, result: {:?} }}",
+    method,
+    params,
+    result
 )]
 #[serde(rename_all = "camelCase")]
 pub struct EthPayload {
@@ -56,17 +56,12 @@ pub struct EthPayload {
 impl EthPayload {
     // Create a new EthPayload with the given ID and optional method, params, and result
     pub fn new(
-        id: u64,
         method: Option<String>,
         params: Option<Vec<serde_json::Value>>,
         result: Option<serde_json::Value>,
     ) -> Self {
         EthPayload {
-            base: MessagePayloadBase {
-                jsonrpc: "2.0".to_string(),
-                id,
-                origin: None,
-            },
+            base: MessagePayloadBase { origin: None },
             method,
             params,
             result,
@@ -263,10 +258,34 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    fn test_deserialization_minimal_bare_request() {
+        // Simulate a JsValue that only contains a "method" field without a "type"
+        let js_value = JsValue::from_serde(&json!({
+            "method": "eth_requestAccounts"
+        }))
+        .expect("Failed to convert JSON to JsValue");
+
+        // Attempt to deserialize it into a MessagePayload
+        let deserialized_payload: Result<MessagePayload, JsValue> =
+            MessagePayload::from_js_value(&js_value);
+
+        match deserialized_payload {
+            Ok(MessagePayload::JsonRequest(bare_request)) => {
+                console::log_1(&"Successfully deserialized minimal BareRequest".into());
+                assert_eq!(bare_request.method, Some("eth_requestAccounts".to_string()));
+                assert_eq!(bare_request.params, None); // Params are expected to be None in this case
+            }
+            Ok(_) => panic!("Deserialized payload type does not match BareRequest"),
+            Err(e) => {
+                console::log_1(&format!("Deserialization failed with error: {:?}", e).into());
+                panic!("Deserialization unexpectedly failed")
+            }
+        }
+    }
+
+    #[wasm_bindgen_test]
     fn test_deserialization_bare_request() {
         let js_value = JsValue::from_serde(&json!({
-            "jsonrpc": "2.0",
-            "id": 1,
             "method": "eth_chainId",
             "params": []
         }))
@@ -281,8 +300,6 @@ mod tests {
         match deserialized_payload {
             MessagePayload::JsonRequest(bare_request) => {
                 console::log_1(&"Deserialized BareRequest matches expected".into());
-                assert_eq!(bare_request.base.jsonrpc, "2.0");
-                assert_eq!(bare_request.base.id, 1);
                 assert_eq!(bare_request.method, Some("eth_chainId".to_string()));
                 assert_eq!(bare_request.params, Some(vec![]));
             }
