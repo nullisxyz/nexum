@@ -3,7 +3,6 @@ use provider::EthereumProvider;
 use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
 use web_sys::window;
 
-mod eip1193;
 mod eip6963;
 mod provider;
 
@@ -17,15 +16,12 @@ macro_rules! set_properties {
 
 #[wasm_bindgen]
 pub fn initialize_provider() -> Result<(), JsValue> {
-    // Set up a panic hook to log errors
-    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    // print pretty errors in wasm https://github.com/rustwasm/console_error_panic_hook
+    // This is not needed for tracing_wasm to work, but it is a common tool for getting proper error line numbers for panics.
+    console_error_panic_hook::set_once();
 
-    // Initialize tracing for logging to the console
-    tracing_wasm::set_as_global_default_with_config(
-        tracing_wasm::WASMLayerConfigBuilder::new()
-            .set_max_level(tracing::Level::TRACE)
-            .build(),
-    );
+    // Add this line:
+    wasm_tracing::set_as_global_default();
 
     // Create a new instance of the EthereumProvider
     let provider = EthereumProvider::new();

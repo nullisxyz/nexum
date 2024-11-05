@@ -1,16 +1,25 @@
+use async_lock::Mutex;
+use futures::future::Either;
+use gloo_timers::future::TimeoutFuture;
 use gloo_utils::format::JsValueSerdeExt;
-use js_sys::{Function, Promise};
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use js_sys::Function;
+use nexum_primitives::{
+    Error, MessageType, ProtocolMessage, Request, RequestWithId, ResponseWithId,
+};
+use serde_wasm_bindgen::from_value;
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, time::Duration};
 use tracing::trace;
+use uuid::Uuid;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::future_to_promise;
 use web_sys::{window, CustomEvent, CustomEventInit, MessageEvent};
 
 use crate::eip6963::{EIP6963Provider, EIP6963ProviderDetail, EIP6963ProviderInfo};
 
 // Global thread-local storage for the provider instance
 thread_local! {
-    static PROVIDER_INSTANCE: RefCell<Option<Rc<RefCell<EthereumProvider>>>> = RefCell::new(None);
+    static PROVIDER_INSTANCE: RefCell<Option<Rc<EthereumProvider>>> = RefCell::new(None);
 }
 
 #[wasm_bindgen]
@@ -19,8 +28,10 @@ pub struct EthereumProvider {
     connected: bool,
     chain_id: String,
     accounts: Vec<String>,
+
+    // EIP-1193 fields
     event_listeners: RefCell<HashMap<String, Vec<Function>>>,
-    pending_requests: RefCell<HashMap<u64, Function>>,
+    pending_requests: Arc<Mutex<HashMap<String, futures::channel::oneshot::Sender<JsValue>>>>,
 }
 
 #[wasm_bindgen]
@@ -33,27 +44,27 @@ impl EthereumProvider {
             chain_id: "".to_string(),
             accounts: vec![],
             event_listeners: RefCell::new(HashMap::new()),
-            pending_requests: RefCell::new(HashMap::new()),
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
         };
 
-        // Initialize the provider instance
-        let provider_rc = Rc::new(RefCell::new(provider));
+        let provider_rc = Rc::new(provider);
         PROVIDER_INSTANCE.with(|instance| {
             *instance.borrow_mut() = Some(Rc::clone(&provider_rc));
         });
 
         // Set up internal message handler and request listener
-        provider_rc.borrow().setup_message_handler();
+        provider_rc.setup_message_handler();
         EthereumProvider::listen_for_request_provider(Rc::clone(&provider_rc));
 
-        let x = provider_rc.borrow().clone();
-        x
+        (*provider_rc).clone()
     }
 
     // Public EIP-1193 `request` method, returns a Promise
-    pub fn request(&self, args: JsValue) -> Result<Promise, JsValue> {
-        trace!("Received request: {:?}", args);
-        Ok(Promise::resolve(&JsValue::NULL))
+    // https://eips.ethereum.org/EIPS/eip-1193#request
+    #[wasm_bindgen]
+    pub fn request(&self, args: JsValue) -> js_sys::Promise {
+        let this = self.clone();
+        future_to_promise(async move { this.request_async(args).await })
     }
 
     // Public method to add an event listener
@@ -82,8 +93,79 @@ impl EthereumProvider {
 
 // Internal methods for EthereumProvider
 impl EthereumProvider {
+    // Async request handler
+    async fn request_async(self, args: JsValue) -> Result<JsValue, JsValue> {
+        trace!("Received request: {:?}", args);
+        let window = match window() {
+            Some(win) => win,
+            None => return Err(JsValue::from_str("Window object is unavailable")),
+        };
+
+        // Deserialize the incoming request
+        let request = match args.into_serde::<Request>() {
+            Ok(req) => req,
+            Err(_) => return Err(JsValue::from_str("Failed to deserialize Request")),
+        };
+
+        // Generate a unique ID for the request
+        let id = Uuid::new_v4().to_string();
+
+        // Create a one-shot channel to receive the response
+        let (tx, rx) = futures::channel::oneshot::channel::<JsValue>();
+
+        // Store the sender in pending_requests
+        self.pending_requests.lock().await.insert(id.clone(), tx);
+
+        // Prepare the payload with the request_id
+        let payload = ProtocolMessage::new(MessageType::Request(RequestWithId {
+            id: id.clone(),
+            request,
+        }));
+
+        // Dispatch the request
+        if let Err(_) = window.post_message(
+            &JsValue::from(payload),
+            window.location().origin().unwrap_or_default().as_str(),
+        ) {
+            return Err(JsValue::from_str("Failed to post message"));
+        }
+
+        // Set a timeout duration
+        let timeout_duration = Duration::from_secs(30);
+        let response = match futures::future::select(
+            rx,
+            TimeoutFuture::new(timeout_duration.as_millis() as u32),
+        )
+        .await
+        {
+            Either::Left((Ok(val), _)) => val,
+            Either::Left((Err(_), _)) => JsValue::from_str("Receiver dropped"),
+            Either::Right((_, _)) => {
+                // Remove the pending request if it timed out
+                self.pending_requests.lock().await.remove(&id);
+                return Err(JsValue::from_str("Request timed out"));
+            }
+        };
+
+        trace!("Received response: {:?}", response);
+
+        // Process the response to extract the inner value
+        match response.into_serde::<ProtocolMessage>() {
+            Ok(protocol_message) => match protocol_message.message {
+                MessageType::Response(ResponseWithId { result, .. }) => match result {
+                    Ok(result) => Ok(JsValue::from_serde(&result).unwrap_or_else(|_| {
+                        JsValue::from_str("Failed to serialize success result")
+                    })),
+                    Err(Error { message, .. }) => Err(JsValue::from_str(&message)),
+                },
+                _ => Err(JsValue::from_str("Unexpected message type")),
+            },
+            Err(_) => Err(JsValue::from_str("Failed to deserialize ProtocolMessage")),
+        }
+    }
+
     // EIP-6963: Respond to `requestProvider` event with provider details
-    fn listen_for_request_provider(provider_ref: Rc<RefCell<Self>>) {
+    fn listen_for_request_provider(provider_ref: Rc<EthereumProvider>) {
         let callback = Closure::wrap(Box::new(move || {
             EthereumProvider::announce_provider(Rc::clone(&provider_ref));
         }) as Box<dyn FnMut()>);
@@ -100,15 +182,14 @@ impl EthereumProvider {
     }
 
     // EIP-6963: Emit the `announceProvider` `CustomEvent` with provider details
-    // TODO: Consider caching the populated `CustomEvent`
-    fn announce_provider(provider_ref: Rc<RefCell<Self>>) {
-        let provider = provider_ref.borrow();
+    fn announce_provider(provider_ref: Rc<EthereumProvider>) {
+        let provider = &*provider_ref;
         let info = provider.get_info();
 
         // Create an EIP6963ProviderDetail with serialized info and provider as JsValue
         let detail = EIP6963ProviderDetail::new(
             JsValue::from_serde(&info).expect("Failed to serialize provider info"),
-            JsValue::from(provider_ref.borrow().clone()),
+            JsValue::from(provider.clone()),
         );
 
         let mut event_init = CustomEventInit::new();
@@ -126,29 +207,34 @@ impl EthereumProvider {
 
     // Setup a message handler for handling incoming messages
     fn setup_message_handler(&self) {
-        let pending_requests = self.pending_requests.clone();
-        let closure = Closure::wrap(Box::new(move |event: JsValue| {
-            if let Ok(event) = event.dyn_into::<MessageEvent>() {
-                let data = event.data();
-                if let Ok(data) = data.dyn_into::<JsValue>() {
-                    if let Some(payload_type) = js_sys::Reflect::get(&data, &"type".into()).ok() {
-                        if payload_type == JsValue::from_str("eth:payload") {
-                            if let Some(payload) =
-                                js_sys::Reflect::get(&data, &"payload".into()).ok()
-                            {
-                                if let Some(id) = js_sys::Reflect::get(&payload, &"id".into())
-                                    .ok()
-                                    .and_then(|v| v.as_f64().map(|v| v as u64))
-                                {
-                                    if let Some(promise) = pending_requests.borrow_mut().remove(&id)
-                                    {
-                                        let _ = promise.call1(&JsValue::NULL, &payload);
-                                    }
-                                }
+        let pending_requests = Arc::clone(&self.pending_requests);
+        let closure = Closure::wrap(Box::new(move |event: MessageEvent| {
+            trace!("Received message event: {:?}", event);
+            let data = event.data();
+            trace!("Received message data: {:?}", data);
+
+            // Now, we suspect that data is actually a ProtocolMessage, so if it is a
+            // protocol message, let's send it to the background script.
+            if let Ok(msg) = from_value::<ProtocolMessage>(data.clone()).map(|m| m.message) {
+                trace!("Payload is a ProtocolMessage: {:?}", msg);
+                if let MessageType::Response(response_with_id) = msg {
+                    trace!("Received response: {:?}", response_with_id);
+
+                    let pending_requests = pending_requests.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let mut pending = pending_requests.lock().await;
+                        if let Some(sender) = pending.remove(&response_with_id.id) {
+                            // Send the determined response back through the oneshot channel
+                            if sender.send(data).is_err() {
+                                trace!("Failed to send response, receiver dropped");
                             }
+                        } else {
+                            trace!("No pending request found for id {}", response_with_id.id);
                         }
-                    }
+                    });
                 }
+            } else {
+                trace!("Payload is not a ProtocolMessage.");
             }
         }) as Box<dyn FnMut(_)>);
 
@@ -172,4 +258,3 @@ impl EIP6963Provider for EthereumProvider {
         }
     }
 }
-

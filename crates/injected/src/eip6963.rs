@@ -3,7 +3,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct EIP6963ProviderInfo {
+pub(crate) struct EIP6963ProviderInfo {
     pub uuid: String,
     pub name: String,
     pub icon: String,
@@ -11,14 +11,14 @@ pub struct EIP6963ProviderInfo {
 }
 
 // Define the EIP6963Provider trait
-pub trait EIP6963Provider {
+pub(crate) trait EIP6963Provider {
     fn get_info(&self) -> EIP6963ProviderInfo;
 }
 
 // Detail structure for EIP6963, holding provider information in JsValue format for compatibility
 #[wasm_bindgen]
 #[derive(Debug)]
-pub struct EIP6963ProviderDetail {
+pub(crate) struct EIP6963ProviderDetail {
     info: JsValue,
     provider: JsValue,
 }
